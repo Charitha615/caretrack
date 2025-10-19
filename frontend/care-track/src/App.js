@@ -7,6 +7,7 @@ import Contact from './pages/Contact';
 import Reports from './pages/Reports';
 import Login from './pages/Login';
 import './styles/App.css';
+import ReportPage from './pages/ReportPage';
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
           <Route path="/about" element={<About />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/report" element={<ReportPage />} />
           <Route path="/login" element={<Login />} />
         </Routes>
       </div>

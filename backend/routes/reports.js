@@ -2,6 +2,7 @@ const express = require('express');
 const Report = require('../models/Report');
 const { uploadImage, uploadVideo } = require('../middleware/upload');
 const { sendReportConfirmationEmail } = require('../config/emailConfig');
+const { handleReportUploads, handleUploadErrors } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -33,94 +34,131 @@ const handleUploads = (req, res, next) => {
 };
 
 // Create new street dog report (Public API - no authentication required)
-router.post('/report-street-dog', handleUploads, async (req, res) => {
-  try {
-    const {
-      reporterName,
-      reporterEmail,
-      reporterContact,
-      reporterAddress,
-      reportLocation,
-      latitude,
-      longitude,
-      description,
-      dogCount,
-      dogCondition,
-      urgencyLevel,
-      additionalNotes
-    } = req.body;
+// Create new street dog report (Public API - no authentication required)
+router.post(
+  '/report-street-dog',
+  handleReportUploads,
+  handleUploadErrors,
+  async (req, res) => {
+    try {
+      console.log('Received files:', req.files); // Debug log
+      console.log('Received body:', req.body); // Debug log
 
-    // Validate required fields
-    if (!reporterName || !reporterEmail || !reporterContact || !reporterAddress || 
-        !reportLocation || !latitude || !longitude || !description) {
-      return res.status(400).json({
-        success: false,
-        message: 'All required fields must be provided'
-      });
-    }
+      const {
+        reporterName,
+        reporterEmail,
+        reporterContact,
+        reporterAddress,
+        reportLocation,
+        latitude,
+        longitude,
+        description,
+        dogCount,
+        dogCondition,
+        urgencyLevel,
+        additionalNotes
+      } = req.body;
 
-    // Create new report
-    const report = new Report({
-      reporterName,
-      reporterEmail,
-      reporterContact,
-      reporterAddress,
-      reportLocation,
-      latitude: parseFloat(latitude),
-      longitude: parseFloat(longitude),
-      description,
-      dogCount: dogCount ? parseInt(dogCount) : 1,
-      dogCondition: dogCondition || 'unknown',
-      urgencyLevel: urgencyLevel || 'medium',
-      additionalNotes: additionalNotes || '',
-      images: req.files?.filter(file => file.fieldname === 'images').map(file => file.path) || [],
-      videos: req.files?.filter(file => file.fieldname === 'videos').map(file => file.path) || []
-    });
+      // Validate required fields
+      const requiredFields = {
+        reporterName,
+        reporterEmail,
+        reporterContact,
+        reportLocation,
+        description
+      };
 
-    await report.save();
+      const missingFields = Object.entries(requiredFields)
+        .filter(([key, value]) => !value || value.trim() === '')
+        .map(([key]) => key);
 
-    // Send confirmation email
-    const emailSent = await sendReportConfirmationEmail(
-      reporterEmail, 
-      reporterName, 
-      report.reportNumber
-    );
-
-    res.status(201).json({
-      success: true,
-      message: 'Street dog report submitted successfully',
-      data: {
-        report: {
-          id: report._id,
-          reportNumber: report.reportNumber,
-          reporterName: report.reporterName,
-          reporterEmail: report.reporterEmail,
-          reportLocation: report.reportLocation,
-          status: report.status,
-          createdAt: report.createdAt
-        },
-        emailSent: emailSent
+      if (missingFields.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields',
+          missingFields: missingFields
+        });
       }
-    });
 
-  } catch (error) {
-    console.error('Report submission error:', error);
-    
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
+      // Process uploaded files
+      const imageFiles = req.files?.images || [];
+      const videoFiles = req.files?.videos || [];
+
+      console.log('Image files:', imageFiles);
+      console.log('Video files:', videoFiles);
+
+      // Create new report
+      const report = new Report({
+        reporterName: reporterName.trim(),
+        reporterEmail: reporterEmail.trim(),
+        reporterContact: reporterContact.trim(),
+        reporterAddress: reporterAddress ? reporterAddress.trim() : '',
+        reportLocation: reportLocation.trim(),
+        latitude: latitude ? parseFloat(latitude) : 0,
+        longitude: longitude ? parseFloat(longitude) : 0,
+        description: description.trim(),
+        dogCount: dogCount ? parseInt(dogCount) : 1,
+        dogCondition: dogCondition || 'unknown',
+        urgencyLevel: urgencyLevel || 'medium',
+        additionalNotes: additionalNotes ? additionalNotes.trim() : '',
+        images: imageFiles.map(file => file.filename), // Store only filename
+        videos: videoFiles.map(file => file.filename)  // Store only filename
+      });
+
+      await report.save();
+
+      // Send confirmation email
+      let emailSent = false;
+      try {
+        emailSent = await sendReportConfirmationEmail(
+          reporterEmail,
+          reporterName,
+          report.reportNumber
+        );
+      } catch (emailError) {
+        console.error('Email sending failed:', emailError);
+        // Don't fail the request if email fails
+      }
+
+      res.status(201).json({
+        success: true,
+        message: 'Street dog report submitted successfully',
+        data: {
+          report: {
+            id: report._id,
+            reportNumber: report.reportNumber,
+            reporterName: report.reporterName,
+            reporterEmail: report.reporterEmail,
+            reportLocation: report.reportLocation,
+            status: report.status,
+            createdAt: report.createdAt,
+            imagesCount: imageFiles.length,
+            videosCount: videoFiles.length
+          },
+          emailSent: emailSent
+        }
+      });
+
+    } catch (error) {
+      console.error('Report submission error:', error);
+
+      if (error.name === 'ValidationError') {
+        const errors = Object.values(error.errors).map(err => err.message);
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: errors
+        });
+      }
+
+      res.status(500).json({
         success: false,
-        message: 'Validation failed',
-        errors: errors
+        message: 'Internal server error while submitting report',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
-
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error while submitting report'
-    });
   }
-});
+);
 
 // Get report by reference number (Public API)
 router.get('/track-report/:reportNumber', async (req, res) => {

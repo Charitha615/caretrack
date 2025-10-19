@@ -27,12 +27,13 @@ const Navbar = () => {
         }}>
           CareTrack
         </Link>
-        
+
         <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
           <Link to="/" style={{ color: 'white', textDecoration: 'none' }}>Home</Link>
           <Link to="/about" style={{ color: 'white', textDecoration: 'none' }}>About Us</Link>
           <Link to="/reports" style={{ color: 'white', textDecoration: 'none' }}>Reports</Link>
           <Link to="/contact" style={{ color: 'white', textDecoration: 'none' }}>Contact Us</Link>
+          <Link to="/report" className="nav-link report-btn">Report a Dog</Link>
           <Link to="/login" style={{
             color: 'white',
             textDecoration: 'none',
