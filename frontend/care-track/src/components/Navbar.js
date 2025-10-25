@@ -34,7 +34,7 @@ const Navbar = () => {
           <Link to="/reports" style={{ color: 'white', textDecoration: 'none' }}>Reports</Link>
           <Link to="/contact" style={{ color: 'white', textDecoration: 'none' }}>Contact Us</Link>
           <Link to="/report" className="nav-link report-btn">Report a Dog</Link>
-          <Link to="/login" style={{
+          <Link to="/doctor/login" style={{
             color: 'white',
             textDecoration: 'none',
             backgroundColor: '#ff6b6b',

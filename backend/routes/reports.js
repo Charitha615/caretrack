@@ -1,39 +1,21 @@
 const express = require('express');
 const Report = require('../models/Report');
-const { uploadImage, uploadVideo } = require('../middleware/upload');
-const { sendReportConfirmationEmail } = require('../config/emailConfig');
-const { handleReportUploads, handleUploadErrors } = require('../middleware/upload');
+const ReportAfterMedia = require('../models/ReportAfterMedia');
+const {
+  handleReportUploads,
+  handleUploadErrors,
+  handleAfterMediaUploads
+} = require('../middleware/upload');
+const {
+  sendReportConfirmationEmail,
+  sendAdminNotificationEmail,
+  sendStatusUpdateEmail
+} = require('../config/emailConfig');
 
 const router = express.Router();
 
-// Handle multiple file uploads
-const handleUploads = (req, res, next) => {
-  // Upload up to 5 images
-  const imageUpload = uploadImage.array('images', 5);
-  // Upload up to 2 videos
-  const videoUpload = uploadVideo.array('videos', 2);
+// ===== EXISTING REPORT FUNCTIONALITY =====
 
-  imageUpload(req, res, (err) => {
-    if (err) {
-      return res.status(400).json({
-        success: false,
-        message: err.message
-      });
-    }
-
-    videoUpload(req, res, (videoErr) => {
-      if (videoErr) {
-        return res.status(400).json({
-          success: false,
-          message: videoErr.message
-        });
-      }
-      next();
-    });
-  });
-};
-
-// Create new street dog report (Public API - no authentication required)
 // Create new street dog report (Public API - no authentication required)
 router.post(
   '/report-street-dog',
@@ -41,8 +23,8 @@ router.post(
   handleUploadErrors,
   async (req, res) => {
     try {
-      console.log('Received files:', req.files); // Debug log
-      console.log('Received body:', req.body); // Debug log
+      console.log('Received files:', req.files);
+      console.log('Received body:', req.body);
 
       const {
         reporterName,
@@ -84,9 +66,6 @@ router.post(
       const imageFiles = req.files?.images || [];
       const videoFiles = req.files?.videos || [];
 
-      console.log('Image files:', imageFiles);
-      console.log('Video files:', videoFiles);
-
       // Create new report
       const report = new Report({
         reporterName: reporterName.trim(),
@@ -101,23 +80,30 @@ router.post(
         dogCondition: dogCondition || 'unknown',
         urgencyLevel: urgencyLevel || 'medium',
         additionalNotes: additionalNotes ? additionalNotes.trim() : '',
-        images: imageFiles.map(file => file.filename), // Store only filename
-        videos: videoFiles.map(file => file.filename)  // Store only filename
+        images: imageFiles.map(file => file.filename),
+        videos: videoFiles.map(file => file.filename)
       });
 
       await report.save();
 
-      // Send confirmation email
-      let emailSent = false;
+      // Send confirmation email to user
+      let userEmailSent = false;
       try {
-        emailSent = await sendReportConfirmationEmail(
+        userEmailSent = await sendReportConfirmationEmail(
           reporterEmail,
           reporterName,
           report.reportNumber
         );
       } catch (emailError) {
-        console.error('Email sending failed:', emailError);
-        // Don't fail the request if email fails
+        console.error('User email sending failed:', emailError);
+      }
+
+      // Send notification email to admin
+      let adminEmailSent = false;
+      try {
+        adminEmailSent = await sendAdminNotificationEmail(report);
+      } catch (adminEmailError) {
+        console.error('Admin email sending failed:', adminEmailError);
       }
 
       res.status(201).json({
@@ -135,7 +121,10 @@ router.post(
             imagesCount: imageFiles.length,
             videosCount: videoFiles.length
           },
-          emailSent: emailSent
+          emailSent: {
+            user: userEmailSent,
+            admin: adminEmailSent
+          }
         }
       });
 
@@ -197,6 +186,351 @@ router.get('/public/reports', async (req, res) => {
     success: true,
     message: 'Public reports endpoint - use POST /api/reports/report-street-dog to submit reports'
   });
+});
+
+// Update report status (Admin API) - Original without media
+router.patch('/admin/update-status/:reportId', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { status, adminNotes } = req.body;
+
+    // Validate required fields
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required'
+      });
+    }
+
+    // Validate status value
+    const validStatuses = ['pending', 'under_review', 'released', 'closed'];
+
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status value',
+        validStatuses: validStatuses
+      });
+    }
+
+    // Find the report
+    const report = await Report.findById(reportId);
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+
+    const oldStatus = report.status;
+
+    // Update report status
+    report.status = status;
+    if (adminNotes) {
+      report.adminNotes = adminNotes;
+    }
+    report.updatedAt = new Date();
+
+    await report.save();
+
+    // Send status update email to user
+    let emailSent = false;
+    try {
+      emailSent = await sendStatusUpdateEmail(
+        report.reporterEmail,
+        report.reporterName,
+        report.reportNumber,
+        oldStatus,
+        status,
+        adminNotes
+      );
+    } catch (emailError) {
+      console.error('Status update email sending failed:', emailError);
+      // Don't fail the request if email fails
+    }
+
+    res.json({
+      success: true,
+      message: 'Report status updated successfully',
+      data: {
+        report: {
+          id: report._id,
+          reportNumber: report.reportNumber,
+          oldStatus,
+          newStatus: status,
+          adminNotes: adminNotes || null
+        },
+        emailSent: emailSent
+      }
+    });
+
+  } catch (error) {
+    console.error('Status update error:', error);
+
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error while updating status',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ===== NEW AFTER MEDIA FUNCTIONALITY =====
+
+// Update report status with after media (Admin API)
+// Update report status with after media (Admin API)
+router.patch(
+  '/admin/update-status-with-media/:reportId',
+  handleAfterMediaUploads,
+  handleUploadErrors,
+  async (req, res) => {
+    try {
+      const { reportId } = req.params;
+      const { status, adminNotes } = req.body;
+
+      console.log('Received status update request:', {
+        reportId,
+        status,
+        adminNotes,
+        files: req.files
+      });
+
+      // Validate required fields
+      if (!status) {
+        return res.status(400).json({
+          success: false,
+          message: 'Status is required'
+        });
+      }
+
+      // Validate status value - only allow released and closed for media upload
+      const validFinalStatuses = ['released', 'closed'];
+
+      if (!validFinalStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Media upload only allowed for released or closed status',
+          validStatuses: validFinalStatuses
+        });
+      }
+
+      // Find the report
+      const report = await Report.findById(reportId);
+
+      if (!report) {
+        return res.status(404).json({
+          success: false,
+          message: 'Report not found'
+        });
+      }
+
+      const oldStatus = report.status;
+
+      // Process uploaded after media files
+      const afterImageFiles = req.files?.afterImages || [];
+      const afterVideoFiles = req.files?.afterVideos || [];
+
+      console.log('After images:', afterImageFiles);
+      console.log('After videos:', afterVideoFiles);
+
+      // Update report status
+      report.status = status;
+      if (adminNotes) {
+        report.adminNotes = adminNotes;
+      }
+      report.updatedAt = new Date();
+
+      await report.save();
+
+      // Save after media to separate collection if files were uploaded
+      let afterMediaSaved = false;
+      if (afterImageFiles.length > 0 || afterVideoFiles.length > 0) {
+        const afterMedia = new ReportAfterMedia({
+          reportId: report._id,
+          reportNumber: report.reportNumber,
+          images: afterImageFiles.map(file => ({
+            filename: file.filename,
+            originalName: file.originalname,
+            path: file.path
+          })),
+          videos: afterVideoFiles.map(file => ({
+            filename: file.filename,
+            originalName: file.originalname,
+            path: file.path
+          })),
+          status: status,
+          adminNotes: adminNotes || ''
+        });
+
+        await afterMedia.save();
+        afterMediaSaved = true;
+      }
+
+      // Send status update email to user (enhanced with after media info)
+      let emailSent = false;
+      try {
+        emailSent = await sendStatusUpdateEmail(
+          report.reporterEmail,
+          report.reporterName,
+          report.reportNumber,
+          oldStatus,
+          status,
+          adminNotes,
+          afterMediaSaved // Pass whether after media was uploaded
+        );
+      } catch (emailError) {
+        console.error('Status update email sending failed:', emailError);
+      }
+
+      res.json({
+        success: true,
+        message: 'Report status updated successfully' + (afterMediaSaved ? ' with after media' : ''),
+        data: {
+          report: {
+            id: report._id,
+            reportNumber: report.reportNumber,
+            oldStatus,
+            newStatus: status,
+            adminNotes: adminNotes || null
+          },
+          afterMedia: afterMediaSaved ? {
+            imagesCount: afterImageFiles.length,
+            videosCount: afterVideoFiles.length
+          } : null,
+          emailSent: emailSent
+        }
+      });
+
+    } catch (error) {
+      console.error('Status update with media error:', error);
+
+      if (error.name === 'ValidationError') {
+        const errors = Object.values(error.errors).map(err => err.message);
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: errors
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error while updating status',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  }
+);
+
+
+// Get after media for a report
+router.get('/after-media/:reportNumber', async (req, res) => {
+  try {
+    const { reportNumber } = req.params;
+
+    const afterMedia = await ReportAfterMedia.find({ reportNumber })
+      .sort({ createdAt: -1 })
+      .select('-__v');
+
+    res.json({
+      success: true,
+      data: {
+        afterMedia
+      }
+    });
+
+  } catch (error) {
+    console.error('Get after media error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Get complete report with before and after media
+router.get('/complete-report/:reportNumber', async (req, res) => {
+  try {
+    const { reportNumber } = req.params;
+
+    const report = await Report.findOne({ reportNumber })
+      .select('-__v -updatedAt');
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+
+    const afterMedia = await ReportAfterMedia.find({ reportNumber })
+      .sort({ createdAt: -1 })
+      .select('-__v');
+
+    res.json({
+      success: true,
+      data: {
+        report,
+        afterMedia
+      }
+    });
+
+  } catch (error) {
+    console.error('Get complete report error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// ===== ADMIN REPORTS MANAGEMENT =====
+
+// Get all reports for admin
+router.get('/admin/reports', async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status } = req.query;
+
+    const query = {};
+    if (status) {
+      query.status = status;
+    }
+
+    const reports = await Report.find(query)
+      .select('-__v')
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Report.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: {
+        reports,
+        totalPages: Math.ceil(total / limit),
+        currentPage: parseInt(page),
+        total
+      }
+    });
+
+  } catch (error) {
+    console.error('Get reports error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
 });
 
 module.exports = router;
