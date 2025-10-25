@@ -357,7 +357,7 @@ const ReportForm = () => {
                                     accept="image/*"
                                     onChange={handleImageChange}
                                 />
-                                <small>Maximum 10 photos. Supported formats: JPG, PNG, WebP</small>
+                                <small>Maximum 5 photos. Supported formats: JPG, PNG, WebP</small>
                                 {images.length > 0 && (
                                     <div className="file-preview">
                                         <strong>{images.length} photo(s) selected</strong>
@@ -373,7 +373,7 @@ const ReportForm = () => {
                                     accept="video/*"
                                     onChange={handleVideoChange}
                                 />
-                                <small>Maximum 5 videos. Supported formats: MP4, MOV, AVI</small>
+                                <small>Maximum 2 videos. Supported formats: MP4, MOV, AVI</small>
                                 {videos.length > 0 && (
                                     <div className="file-preview">
                                         <strong>{videos.length} video(s) selected</strong>

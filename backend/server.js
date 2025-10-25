@@ -16,7 +16,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/reports', require('./routes/reports')); // Add this line
+app.use('/api/reports', require('./routes/reports')); // This line connects your reports routes
 
 // Default route
 app.get('/', (req, res) => {  
