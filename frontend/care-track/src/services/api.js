@@ -57,6 +57,25 @@ class ApiService {
   async getReportByNumber(reportNumber) {
     return this.request(API_ENDPOINTS.REPORTS.TRACK_REPORT.replace(':reportNumber', reportNumber));
   }
+
+  async updateReportStatusWithMedia(reportId, status, adminNotes = '', formData) {
+    return this.request(`/reports/admin/update-status-with-media/${reportId}`, {
+      method: 'PATCH',
+      body: formData, // Use FormData for file uploads
+      headers: {
+        // Don't set Content-Type, let browser set it with boundary
+      },
+    });
+  }
+
+  async getAfterMedia(reportNumber) {
+    return this.request(`/reports/after-media/${reportNumber}`);
+  }
+
+  async getCompleteReport(reportNumber) {
+    return this.request(`/reports/complete-report/${reportNumber}`);
+  }
 }
+
 
 export const apiService = new ApiService();

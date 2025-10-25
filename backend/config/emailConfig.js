@@ -162,7 +162,8 @@ const sendAdminNotificationEmail = async (reportData) => {
 };
 
 // Email template function for status update notification to user
-const sendStatusUpdateEmail = async (reporterEmail, reporterName, reportNumber, oldStatus, newStatus, adminNotes) => {
+// Update the sendStatusUpdateEmail function to include after media info
+const sendStatusUpdateEmail = async (reporterEmail, reporterName, reportNumber, oldStatus, newStatus, adminNotes, hasAfterMedia = false) => {
   try {
     const statusColors = {
       'pending': '#ffc107',
@@ -202,6 +203,7 @@ const sendStatusUpdateEmail = async (reporterEmail, reporterName, reportNumber, 
                 .status-update { background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 15px 0; }
                 .status-badge { display: inline-block; padding: 8px 15px; color: white; border-radius: 20px; font-weight: bold; }
                 .notes { background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 15px 0; }
+                .after-media { background: #d1ecf1; padding: 15px; border-left: 4px solid #17a2b8; margin: 15px 0; }
                 .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
             </style>
         </head>
@@ -233,6 +235,15 @@ const sendStatusUpdateEmail = async (reporterEmail, reporterName, reportNumber, 
                     <div class="notes">
                         <h4>Update from our team:</h4>
                         <p>${adminNotes}</p>
+                    </div>
+                    ` : ''}
+
+                    ${hasAfterMedia ? `
+                    <div class="after-media">
+                        <h4>📸 After Photos/Videos Available!</h4>
+                        <p>Our team has uploaded photos and videos showing the current condition of the dog(s). 
+                        You can view them when tracking your report on our website.</p>
+                        <p><strong>Track your report:</strong> <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/reports?track=${reportNumber}">View Report Details</a></p>
                     </div>
                     ` : ''}
 

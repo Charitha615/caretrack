@@ -9,9 +9,11 @@ const DoctorDashboard = () => {
   const [error, setError] = useState('');
   const [selectedReport, setSelectedReport] = useState(null);
   const [statusUpdate, setStatusUpdate] = useState({ status: '', adminNotes: '' });
+  const [afterImages, setAfterImages] = useState(null);
+  const [afterVideos, setAfterVideos] = useState(null);
   const [updating, setUpdating] = useState(false);
   const [filters, setFilters] = useState({ status: '', page: 1, limit: 10 });
-  
+
   const { user, logout } = useAuth();
 
   useEffect(() => {
@@ -22,7 +24,7 @@ const DoctorDashboard = () => {
     try {
       setLoading(true);
       const response = await apiService.getReports(filters.page, filters.limit, filters.status);
-      
+
       if (response.success) {
         setReports(response.data.reports);
       }
@@ -35,23 +37,73 @@ const DoctorDashboard = () => {
   };
 
   const handleStatusUpdate = async (reportId) => {
-    if (!statusUpdate.status) return;
+    if (!statusUpdate.status) {
+      setError('Status is required');
+      return;
+    }
 
     try {
       setUpdating(true);
-      const response = await apiService.updateReportStatus(
-        reportId, 
-        statusUpdate.status, 
-        statusUpdate.adminNotes
-      );
+      setError('');
+
+      // Check if we need to use the media upload endpoint
+      const hasAfterMedia = (statusUpdate.status === 'released' || statusUpdate.status === 'closed') &&
+        (afterImages?.length > 0 || afterVideos?.length > 0);
+
+      let response;
+
+      if (hasAfterMedia) {
+        // Use the media upload endpoint
+        const formData = new FormData();
+        formData.append('status', statusUpdate.status);
+        
+        if (statusUpdate.adminNotes) {
+          formData.append('adminNotes', statusUpdate.adminNotes);
+        }
+
+        // Append after images
+        if (afterImages && afterImages.length > 0) {
+          for (let i = 0; i < afterImages.length; i++) {
+            formData.append('afterImages', afterImages[i]);
+          }
+        }
+
+        // Append after videos
+        if (afterVideos && afterVideos.length > 0) {
+          for (let i = 0; i < afterVideos.length; i++) {
+            formData.append('afterVideos', afterVideos[i]);
+          }
+        }
+
+        console.log('Sending form data with status:', statusUpdate.status);
+        console.log('FormData entries:');
+        for (let pair of formData.entries()) {
+          console.log(pair[0] + ': ', pair[1]);
+        }
+
+        response = await apiService.updateReportStatusWithMedia(reportId, formData);
+      } else {
+        // Use regular status update endpoint
+        console.log('Sending regular update with status:', statusUpdate.status);
+        response = await apiService.updateReportStatus(
+          reportId,
+          statusUpdate.status,
+          statusUpdate.adminNotes || ''
+        );
+      }
 
       if (response.success) {
         await fetchReports(); // Refresh the list
         setSelectedReport(null);
         setStatusUpdate({ status: '', adminNotes: '' });
+        setAfterImages(null);
+        setAfterVideos(null);
+        setError('');
+      } else {
+        setError(response.message || 'Failed to update status');
       }
     } catch (err) {
-      setError('Failed to update status');
+      setError(err.response?.data?.message || 'Failed to update status');
       console.error('Error updating status:', err);
     } finally {
       setUpdating(false);
@@ -62,10 +114,6 @@ const DoctorDashboard = () => {
     const statusClasses = {
       pending: 'status-pending',
       under_review: 'status-under-review',
-      rescue_dispatched: 'status-rescue-dispatched',
-      rescue_completed: 'status-rescue-completed',
-      medical_care: 'status-medical-care',
-      rehabilitation: 'status-rehabilitation',
       released: 'status-released',
       closed: 'status-closed'
     };
@@ -90,6 +138,28 @@ const DoctorDashboard = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const handleFileSelection = (files, setter, maxFiles) => {
+    if (files.length > maxFiles) {
+      setError(`Maximum ${maxFiles} files allowed`);
+      return;
+    }
+    setter(Array.from(files)); // Convert FileList to Array
+    setError('');
+  };
+
+  const clearAfterMedia = () => {
+    setAfterImages(null);
+    setAfterVideos(null);
+  };
+
+  const handleStatusChange = (newStatus) => {
+    setStatusUpdate({ ...statusUpdate, status: newStatus });
+    // Clear media when status changes to non-released/closed
+    if (newStatus !== 'released' && newStatus !== 'closed') {
+      clearAfterMedia();
+    }
   };
 
   if (loading && reports.length === 0) {
@@ -139,7 +209,7 @@ const DoctorDashboard = () => {
               <p className="stat-number">{reports.length}</p>
             </div>
           </div>
-          
+
           <div className="stat-card">
             <div className="stat-icon pending-reports">
               <i className="fas fa-clock"></i>
@@ -151,19 +221,19 @@ const DoctorDashboard = () => {
               </p>
             </div>
           </div>
-          
+
           <div className="stat-card">
-            <div className="stat-icon medical-care">
-              <i className="fas fa-heartbeat"></i>
+            <div className="stat-icon under-review">
+              <i className="fas fa-search"></i>
             </div>
             <div className="stat-info">
-              <h3>Medical Care</h3>
+              <h3>Under Review</h3>
               <p className="stat-number">
-                {reports.filter(r => r.status === 'medical_care').length}
+                {reports.filter(r => r.status === 'under_review').length}
               </p>
             </div>
           </div>
-          
+
           <div className="stat-card">
             <div className="stat-icon completed">
               <i className="fas fa-check-circle"></i>
@@ -181,23 +251,19 @@ const DoctorDashboard = () => {
         <div className="filters-section">
           <div className="filter-group">
             <label>Filter by Status:</label>
-            <select 
-              value={filters.status} 
+            <select
+              value={filters.status}
               onChange={(e) => setFilters({ ...filters, status: e.target.value, page: 1 })}
               className="filter-select"
             >
               <option value="">All Reports</option>
               <option value="pending">Pending</option>
               <option value="under_review">Under Review</option>
-              <option value="rescue_dispatched">Rescue Dispatched</option>
-              <option value="rescue_completed">Rescue Completed</option>
-              <option value="medical_care">Medical Care</option>
-              <option value="rehabilitation">Rehabilitation</option>
               <option value="released">Released</option>
               <option value="closed">Closed</option>
             </select>
           </div>
-          
+
           <button onClick={fetchReports} className="refresh-btn">
             <i className="fas fa-sync-alt"></i>
             Refresh
@@ -207,7 +273,7 @@ const DoctorDashboard = () => {
         {/* Reports Table */}
         <div className="reports-section">
           <h2>Street Dog Reports</h2>
-          
+
           {error && (
             <div className="error-banner">
               <i className="fas fa-exclamation-triangle"></i>
@@ -264,17 +330,21 @@ const DoctorDashboard = () => {
                     <td>{formatDate(report.createdAt)}</td>
                     <td>
                       <div className="action-buttons">
-                        <button 
+                        <button
                           onClick={() => setSelectedReport(report)}
                           className="action-btn view-btn"
                           title="View Details"
                         >
                           <i className="fas fa-eye"></i>
                         </button>
-                        <button 
+                        <button
                           onClick={() => {
                             setSelectedReport(report);
-                            setStatusUpdate({ status: report.status, adminNotes: '' });
+                            setStatusUpdate({ 
+                              status: report.status, 
+                              adminNotes: report.adminNotes || '' 
+                            });
+                            clearAfterMedia();
                           }}
                           className="action-btn update-btn"
                           title="Update Status"
@@ -287,7 +357,7 @@ const DoctorDashboard = () => {
                 ))}
               </tbody>
             </table>
-            
+
             {reports.length === 0 && !loading && (
               <div className="no-reports">
                 <i className="fas fa-inbox"></i>
@@ -305,14 +375,18 @@ const DoctorDashboard = () => {
           <div className="modal-content">
             <div className="modal-header">
               <h2>Report Details - {selectedReport.reportNumber}</h2>
-              <button 
-                onClick={() => setSelectedReport(null)}
+              <button
+                onClick={() => {
+                  setSelectedReport(null);
+                  setStatusUpdate({ status: '', adminNotes: '' });
+                  clearAfterMedia();
+                }}
                 className="close-btn"
               >
                 <i className="fas fa-times"></i>
               </button>
             </div>
-            
+
             <div className="modal-body">
               <div className="detail-grid">
                 <div className="detail-section">
@@ -394,29 +468,85 @@ const DoctorDashboard = () => {
                 </div>
               </div>
 
-              {/* Status Update Form */}
+              {/* Status Update Form with After Media Upload */}
               <div className="status-update-form">
                 <h3>Update Status</h3>
+
+                {/* Show media upload only for released/closed status */}
+                {(statusUpdate.status === 'released' || statusUpdate.status === 'closed') && (
+                  <div className="media-upload-section">
+                    <h4>Upload After Media (Optional)</h4>
+                    <p className="upload-description">
+                      Show the current condition of the dog(s) with photos and videos.
+                      These will be visible to the reporter.
+                    </p>
+
+                    <div className="file-upload-group">
+                      <label>After Images (Max 5):</label>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        onChange={(e) => handleFileSelection(e.target.files, setAfterImages, 5)}
+                        className="file-input"
+                      />
+                      <small>Upload images showing the current condition</small>
+                      {afterImages && afterImages.length > 0 && (
+                        <div className="file-preview">
+                          <span>{afterImages.length} image(s) selected</span>
+                          <button
+                            type="button"
+                            onClick={() => setAfterImages(null)}
+                            className="clear-files-btn"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="file-upload-group">
+                      <label>After Videos (Max 2):</label>
+                      <input
+                        type="file"
+                        multiple
+                        accept="video/*"
+                        onChange={(e) => handleFileSelection(e.target.files, setAfterVideos, 2)}
+                        className="file-input"
+                      />
+                      <small>Upload videos showing the current condition</small>
+                      {afterVideos && afterVideos.length > 0 && (
+                        <div className="file-preview">
+                          <span>{afterVideos.length} video(s) selected</span>
+                          <button
+                            type="button"
+                            onClick={() => setAfterVideos(null)}
+                            className="clear-files-btn"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="form-row">
                   <div className="form-group">
                     <label>New Status:</label>
                     <select
                       value={statusUpdate.status}
-                      onChange={(e) => setStatusUpdate({ ...statusUpdate, status: e.target.value })}
+                      onChange={(e) => handleStatusChange(e.target.value)}
                       className="status-select"
                     >
                       <option value="">Select Status</option>
                       <option value="pending">Pending</option>
                       <option value="under_review">Under Review</option>
-                      <option value="rescue_dispatched">Rescue Dispatched</option>
-                      <option value="rescue_completed">Rescue Completed</option>
-                      <option value="medical_care">Medical Care</option>
-                      <option value="rehabilitation">Rehabilitation</option>
                       <option value="released">Released</option>
                       <option value="closed">Closed</option>
                     </select>
                   </div>
-                  
+
                   <div className="form-group">
                     <label>Admin Notes:</label>
                     <textarea
@@ -428,7 +558,7 @@ const DoctorDashboard = () => {
                     />
                   </div>
                 </div>
-                
+
                 <div className="form-actions">
                   <button
                     onClick={() => handleStatusUpdate(selectedReport._id)}
@@ -447,6 +577,16 @@ const DoctorDashboard = () => {
                       </>
                     )}
                   </button>
+
+                  {(afterImages || afterVideos) && (
+                    <button
+                      type="button"
+                      onClick={clearAfterMedia}
+                      className="clear-media-btn"
+                    >
+                      Clear Media
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
