@@ -13,6 +13,7 @@ const DoctorDashboard = () => {
   const [afterVideos, setAfterVideos] = useState(null);
   const [updating, setUpdating] = useState(false);
   const [filters, setFilters] = useState({ status: '', page: 1, limit: 10 });
+  const [copySuccess, setCopySuccess] = useState('');
 
   const { user, logout } = useAuth();
 
@@ -55,8 +56,10 @@ const DoctorDashboard = () => {
       if (hasAfterMedia) {
         // Use the media upload endpoint
         const formData = new FormData();
+
+        // Append all fields first
         formData.append('status', statusUpdate.status);
-        
+
         if (statusUpdate.adminNotes) {
           formData.append('adminNotes', statusUpdate.adminNotes);
         }
@@ -75,6 +78,7 @@ const DoctorDashboard = () => {
           }
         }
 
+        // Debug: Log what we're sending
         console.log('Sending form data with status:', statusUpdate.status);
         console.log('FormData entries:');
         for (let pair of formData.entries()) {
@@ -160,6 +164,45 @@ const DoctorDashboard = () => {
     if (newStatus !== 'released' && newStatus !== 'closed') {
       clearAfterMedia();
     }
+  };
+
+  const getImageUrl = (imagePath) => {
+    if (!imagePath) return '';
+    // If it's already a full URL, return as is
+    if (imagePath.startsWith('http')) {
+      return imagePath;
+    }
+    // Otherwise, construct the full URL
+    return `http://localhost:5000/uploads/reports/${imagePath}`;
+  };
+
+  const getGoogleMapsUrl = (latitude, longitude) => {
+    return `https://www.google.com/maps?q=${latitude},${longitude}`;
+  };
+
+  const getGoogleMapsEmbedUrl = (latitude, longitude) => {
+    return `https://maps.google.com/maps?q=${latitude},${longitude}&z=15&output=embed`;
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopySuccess('Copied!');
+      setTimeout(() => setCopySuccess(''), 2000);
+    }).catch(err => {
+      console.error('Failed to copy: ', err);
+      setCopySuccess('Failed to copy');
+      setTimeout(() => setCopySuccess(''), 2000);
+    });
+  };
+
+  const copyCoordinates = (latitude, longitude) => {
+    const coordinates = `${latitude}, ${longitude}`;
+    copyToClipboard(coordinates);
+  };
+
+  const copyMapLink = (latitude, longitude) => {
+    const mapUrl = getGoogleMapsUrl(latitude, longitude);
+    copyToClipboard(mapUrl);
   };
 
   if (loading && reports.length === 0) {
@@ -340,9 +383,9 @@ const DoctorDashboard = () => {
                         <button
                           onClick={() => {
                             setSelectedReport(report);
-                            setStatusUpdate({ 
-                              status: report.status, 
-                              adminNotes: report.adminNotes || '' 
+                            setStatusUpdate({
+                              status: report.status,
+                              adminNotes: report.adminNotes || ''
                             });
                             clearAfterMedia();
                           }}
@@ -371,8 +414,12 @@ const DoctorDashboard = () => {
 
       {/* Report Detail Modal */}
       {selectedReport && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" onClick={() => {
+          setSelectedReport(null);
+          setStatusUpdate({ status: '', adminNotes: '' });
+          clearAfterMedia();
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Report Details - {selectedReport.reportNumber}</h2>
               <button
@@ -417,7 +464,36 @@ const DoctorDashboard = () => {
                   </div>
                   <div className="detail-item">
                     <label>Coordinates:</label>
-                    <span>{selectedReport.latitude}, {selectedReport.longitude}</span>
+                    <div className="coordinates-container">
+                      <span className="coordinates-text">
+                        {selectedReport.latitude}, {selectedReport.longitude}
+                      </span>
+                      <div className="coordinate-actions">
+                        <button
+                          onClick={() => copyCoordinates(selectedReport.latitude, selectedReport.longitude)}
+                          className="coordinate-btn copy-coords-btn"
+                          title="Copy Coordinates"
+                        >
+                          <i className="fas fa-copy"></i>
+                        </button>
+                        <a
+                          href={getGoogleMapsUrl(selectedReport.latitude, selectedReport.longitude)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="coordinate-btn map-link-btn"
+                          title="Open in Google Maps"
+                        >
+                          <i className="fas fa-external-link-alt"></i>
+                        </a>
+                        <button
+                          onClick={() => copyMapLink(selectedReport.latitude, selectedReport.longitude)}
+                          className="coordinate-btn copy-link-btn"
+                          title="Copy Map Link"
+                        >
+                          <i className="fas fa-link"></i>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div className="detail-item">
                     <label>Description:</label>
@@ -466,7 +542,107 @@ const DoctorDashboard = () => {
                     <span>{formatDate(selectedReport.updatedAt)}</span>
                   </div>
                 </div>
+
+                {/* Map Preview */}
+                <div className="detail-section full-width">
+                  <h3>Location Map</h3>
+                  <div className="map-container">
+                    <iframe
+                      src={getGoogleMapsEmbedUrl(selectedReport.latitude, selectedReport.longitude)}
+                      width="100%"
+                      height="300"
+                      style={{ border: 0, borderRadius: '8px' }}
+                      allowFullScreen=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                      title="Report Location Map"
+                    ></iframe>
+                    <div className="map-actions">
+                      <a
+                        href={getGoogleMapsUrl(selectedReport.latitude, selectedReport.longitude)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="open-maps-btn"
+                      >
+                        <i className="fas fa-external-link-alt"></i>
+                        Open in Google Maps
+                      </a>
+                      <button
+                        onClick={() => copyMapLink(selectedReport.latitude, selectedReport.longitude)}
+                        className="copy-map-link-btn"
+                      >
+                        <i className="fas fa-link"></i>
+                        Copy Map Link
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Media Section */}
+                {(selectedReport.images && selectedReport.images.length > 0) ||
+                  (selectedReport.videos && selectedReport.videos.length > 0) ? (
+                  <div className="detail-section full-width">
+                    <h3>Report Media</h3>
+
+                    {/* Images */}
+                    {selectedReport.images && selectedReport.images.length > 0 && (
+                      <div className="media-section">
+                        <label>Images:</label>
+                        <div className="media-grid">
+                          {selectedReport.images.map((image, index) => (
+                            <div key={index} className="media-item">
+                              <img
+                                src={getImageUrl(image)}
+                                alt={`Report image ${index + 1}`}
+                                className="report-image"
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Videos */}
+                    {selectedReport.videos && selectedReport.videos.length > 0 && (
+                      <div className="media-section">
+                        <label>Videos:</label>
+                        <div className="media-grid">
+                          {selectedReport.videos.map((video, index) => (
+                            <div key={index} className="media-item">
+                              <video
+                                controls
+                                className="report-video"
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                }}
+                              >
+                                <source src={getImageUrl(video)} type="video/mp4" />
+                                Your browser does not support the video tag.
+                              </video>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="detail-section full-width">
+                    <h3>Report Media</h3>
+                    <p>No media attached to this report.</p>
+                  </div>
+                )}
               </div>
+
+              {/* Copy Success Message */}
+              {copySuccess && (
+                <div className="copy-success-message">
+                  <i className="fas fa-check-circle"></i>
+                  {copySuccess}
+                </div>
+              )}
 
               {/* Status Update Form with After Media Upload */}
               <div className="status-update-form">

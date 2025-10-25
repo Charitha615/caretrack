@@ -83,7 +83,7 @@ const ReportCard = ({ report, onSelect }) => {
           {hasBeforeImages ? (
             <div className="image-preview">
               <img 
-                src={`http://localhost:5000/uploads/images/${report.images[0]}`} 
+                src={`http://localhost:5000/uploads/reports/${report.images[0]}`} 
                 alt="Before rescue"
                 onError={(e) => {
                   e.target.src = '/placeholder-before.jpg';
@@ -245,7 +245,7 @@ const ReportModal = ({ report, onClose }) => {
                   {report.images.map((image, index) => (
                     <div key={index} className="media-item">
                       <img 
-                        src={`http://localhost:5000/uploads/images/${image}`} 
+                        src={`http://localhost:5000/uploads/reports/${image}`} 
                         alt={`Before ${index + 1}`}
                         onError={(e) => {
                           e.target.src = '/placeholder-before.jpg';
@@ -334,7 +334,7 @@ const Reports = () => {
     try {
       setLoading(true);
       // Fetch only released and closed reports for success stories
-      const response = await apiService.getReports(1, 50, 'released,closed');
+      const response = await apiService.getPubReports(1, 50, 'released,closed');
       
       if (response.success) {
         // Filter to only include reports with images
