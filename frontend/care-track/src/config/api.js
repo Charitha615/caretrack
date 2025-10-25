@@ -6,6 +6,7 @@ export const API_ENDPOINTS = {
   REPORTS: {
     REPORT_STREET_DOG: '/reports/report-street-dog',
     GET_REPORTS: '/reports/admin/reports',
+    GET_PUB_REPORT:'/reports/public/reports',
     GET_REPORT_BY_ID: '/reports/:id',
     UPDATE_STATUS: '/reports/admin/update-status/:reportId',
     TRACK_REPORT: '/reports/track-report/:reportNumber'

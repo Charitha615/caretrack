@@ -180,12 +180,61 @@ router.get('/track-report/:reportNumber', async (req, res) => {
   }
 });
 
-// Public route to get report status
+// Public route to get all released and closed reports
 router.get('/public/reports', async (req, res) => {
-  res.json({
-    success: true,
-    message: 'Public reports endpoint - use POST /api/reports/report-street-dog to submit reports'
-  });
+  try {
+    const { page = 1, limit = 10 } = req.query;
+
+    // Only fetch reports with status 'released' or 'closed'
+    const query = {
+      status: {
+        $in: ['released', 'closed']
+      }
+    };
+
+    const reports = await Report.find(query)
+      .select('-__v -updatedAt -reporterEmail -reporterContact -reporterAddress -adminNotes')
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .lean();
+
+    const total = await Report.countDocuments(query);
+
+    // Get after media for each report
+    const reportsWithAfterMedia = await Promise.all(
+      reports.map(async (report) => {
+        const afterMedia = await ReportAfterMedia.find({
+          reportNumber: report.reportNumber
+        })
+          .sort({ createdAt: -1 })
+          .select('images videos status createdAt')
+          .lean();
+
+        return {
+          ...report,
+          afterMedia: afterMedia.length > 0 ? afterMedia : null
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: {
+        reports: reportsWithAfterMedia,
+        totalPages: Math.ceil(total / limit),
+        currentPage: parseInt(page),
+        total
+      }
+    });
+
+  } catch (error) {
+    console.error('Get public reports error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error while fetching public reports'
+    });
+  }
 });
 
 // Update report status (Admin API) - Original without media
@@ -285,10 +334,9 @@ router.patch('/admin/update-status/:reportId', async (req, res) => {
   }
 });
 
-// ===== NEW AFTER MEDIA FUNCTIONALITY =====
+// ===== UPDATED AFTER MEDIA FUNCTIONALITY =====
 
-// Update report status with after media (Admin API)
-// Update report status with after media (Admin API)
+// Update report status with after media (Admin API) - FIXED VERSION
 router.patch(
   '/admin/update-status-with-media/:reportId',
   handleAfterMediaUploads,
@@ -296,20 +344,33 @@ router.patch(
   async (req, res) => {
     try {
       const { reportId } = req.params;
-      const { status, adminNotes } = req.body;
 
-      console.log('Received status update request:', {
-        reportId,
-        status,
-        adminNotes,
-        files: req.files
-      });
+      // Enhanced logging to debug the issue
+      console.log('=== STATUS UPDATE WITH MEDIA REQUEST ===');
+      console.log('Report ID:', reportId);
+      console.log('Request body:', req);
+      console.log('Request files:', req.files);
+      console.log('Content-Type:', req.get('Content-Type'));
 
-      // Validate required fields
-      if (!status) {
+      // Extract fields from body - handle both string and object formats
+      let { status, adminNotes } = req.body;
+
+      // If status is an object (can happen with some FormData parsers), extract the value
+      if (status && typeof status === 'object') {
+        status = status.value || status.toString();
+      }
+
+      console.log('Extracted status:', status);
+      console.log('Extracted adminNotes:', adminNotes);
+
+      // Validate required fields with better error message
+      if (!status || status.trim() === '') {
+        console.log('Status validation failed - status is empty or missing');
         return res.status(400).json({
           success: false,
-          message: 'Status is required'
+          message: 'Status is required and cannot be empty',
+          receivedStatus: status,
+          receivedBody: req.body
         });
       }
 
@@ -320,7 +381,8 @@ router.patch(
         return res.status(400).json({
           success: false,
           message: 'Media upload only allowed for released or closed status',
-          validStatuses: validFinalStatuses
+          validStatuses: validFinalStatuses,
+          receivedStatus: status
         });
       }
 
@@ -340,8 +402,8 @@ router.patch(
       const afterImageFiles = req.files?.afterImages || [];
       const afterVideoFiles = req.files?.afterVideos || [];
 
-      console.log('After images:', afterImageFiles);
-      console.log('After videos:', afterVideoFiles);
+      console.log('After images count:', afterImageFiles.length);
+      console.log('After videos count:', afterVideoFiles.length);
 
       // Update report status
       report.status = status;
@@ -354,26 +416,33 @@ router.patch(
 
       // Save after media to separate collection if files were uploaded
       let afterMediaSaved = false;
+      let afterMediaDoc = null;
+
       if (afterImageFiles.length > 0 || afterVideoFiles.length > 0) {
-        const afterMedia = new ReportAfterMedia({
+        afterMediaDoc = new ReportAfterMedia({
           reportId: report._id,
           reportNumber: report.reportNumber,
           images: afterImageFiles.map(file => ({
             filename: file.filename,
             originalName: file.originalname,
-            path: file.path
+            path: file.path,
+            mimetype: file.mimetype,
+            size: file.size
           })),
           videos: afterVideoFiles.map(file => ({
             filename: file.filename,
             originalName: file.originalname,
-            path: file.path
+            path: file.path,
+            mimetype: file.mimetype,
+            size: file.size
           })),
           status: status,
           adminNotes: adminNotes || ''
         });
 
-        await afterMedia.save();
+        await afterMediaDoc.save();
         afterMediaSaved = true;
+        console.log('After media saved successfully');
       }
 
       // Send status update email to user (enhanced with after media info)
@@ -388,11 +457,12 @@ router.patch(
           adminNotes,
           afterMediaSaved // Pass whether after media was uploaded
         );
+        console.log('Status update email sent:', emailSent);
       } catch (emailError) {
         console.error('Status update email sending failed:', emailError);
       }
 
-      res.json({
+      const response = {
         success: true,
         message: 'Report status updated successfully' + (afterMediaSaved ? ' with after media' : ''),
         data: {
@@ -404,12 +474,17 @@ router.patch(
             adminNotes: adminNotes || null
           },
           afterMedia: afterMediaSaved ? {
+            id: afterMediaDoc._id,
             imagesCount: afterImageFiles.length,
-            videosCount: afterVideoFiles.length
+            videosCount: afterVideoFiles.length,
+            createdAt: afterMediaDoc.createdAt
           } : null,
           emailSent: emailSent
         }
-      });
+      };
+
+      console.log('=== SENDING SUCCESS RESPONSE ===');
+      res.json(response);
 
     } catch (error) {
       console.error('Status update with media error:', error);
@@ -432,6 +507,131 @@ router.patch(
   }
 );
 
+// Alternative endpoint that accepts both JSON and FormData
+router.patch('/admin/update-status-flexible/:reportId', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+
+    console.log('=== FLEXIBLE STATUS UPDATE ===');
+    console.log('Report ID:', reportId);
+    console.log('Request body:', req.body);
+    console.log('Request files:', req.files);
+    console.log('Content-Type:', req.get('Content-Type'));
+
+    let { status, adminNotes } = req.body;
+
+    // If no status in body, try to get from query (fallback)
+    if (!status) {
+      status = req.query.status;
+    }
+
+    console.log('Final extracted status:', status);
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required. Provide it in request body or as query parameter.',
+        receivedBody: req.body,
+        receivedQuery: req.query
+      });
+    }
+
+    // Rest of the function remains the same as the fixed version above...
+    // [Copy the same logic from the fixed version above]
+
+    // Find the report
+    const report = await Report.findById(reportId);
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+
+    const oldStatus = report.status;
+
+    // Process uploaded after media files if any
+    const afterImageFiles = req.files?.afterImages || [];
+    const afterVideoFiles = req.files?.afterVideos || [];
+
+    // Update report status
+    report.status = status;
+    if (adminNotes) {
+      report.adminNotes = adminNotes;
+    }
+    report.updatedAt = new Date();
+
+    await report.save();
+
+    // Save after media if files were uploaded
+    let afterMediaSaved = false;
+    if (afterImageFiles.length > 0 || afterVideoFiles.length > 0) {
+      const afterMedia = new ReportAfterMedia({
+        reportId: report._id,
+        reportNumber: report.reportNumber,
+        images: afterImageFiles.map(file => ({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: file.path
+        })),
+        videos: afterVideoFiles.map(file => ({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: file.path
+        })),
+        status: status,
+        adminNotes: adminNotes || ''
+      });
+
+      await afterMedia.save();
+      afterMediaSaved = true;
+    }
+
+    // Send email
+    let emailSent = false;
+    try {
+      emailSent = await sendStatusUpdateEmail(
+        report.reporterEmail,
+        report.reporterName,
+        report.reportNumber,
+        oldStatus,
+        status,
+        adminNotes,
+        afterMediaSaved
+      );
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Report status updated successfully' + (afterMediaSaved ? ' with after media' : ''),
+      data: {
+        report: {
+          id: report._id,
+          reportNumber: report.reportNumber,
+          oldStatus,
+          newStatus: status,
+          adminNotes: adminNotes || null
+        },
+        afterMedia: afterMediaSaved ? {
+          imagesCount: afterImageFiles.length,
+          videosCount: afterVideoFiles.length
+        } : null,
+        emailSent: emailSent
+      }
+    });
+
+  } catch (error) {
+    console.error('Flexible status update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
 
 // Get after media for a report
 router.get('/after-media/:reportNumber', async (req, res) => {
